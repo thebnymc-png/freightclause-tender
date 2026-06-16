@@ -7,7 +7,7 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 //   3. ""             — same-origin (local dev, fullstack single-port)
 const BUILD_API = (import.meta.env.VITE_API_BASE as string | undefined) || "";
 const PROXY_TOKEN = "__PORT_5000__";
-const API_BASE = BUILD_API
+export const API_BASE = BUILD_API
   ? BUILD_API.replace(/\/$/, "")
   : PROXY_TOKEN.startsWith("__") ? "" : PROXY_TOKEN;
 

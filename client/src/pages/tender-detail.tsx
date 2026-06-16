@@ -24,7 +24,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   aud, num, pct, FORMAT_LABELS, laneWeekly, laneMargin, laneStatus,
@@ -54,7 +54,7 @@ function IntakeTab({ tender }: { tender: Tender }) {
     try {
       const fd = new FormData();
       fd.append("file", files[0]);
-      const res = await fetch("/api/upload/parse", { method: "POST", body: fd });
+      const res = await fetch(`${API_BASE}/api/upload/parse`, { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Parse failed");
       setParsed(data);
