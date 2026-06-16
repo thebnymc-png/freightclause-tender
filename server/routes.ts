@@ -154,7 +154,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allLanes = await storage.getAllLanes();
     const active = tenders.filter((t) => t.decision !== "no_go").length;
     let weeklyExposure = 0, weeklyCost = 0;
-    const laneGP: Array<{ label: string; gp: number; tenderRef: string }> = [];
+    const laneGP: Array<{ label: string; origin: string; destination: string; gp: number; tenderRef: string }> = [];
     for (const t of tenders) {
       const tl = allLanes.filter((l) => l.tenderId === t.id);
       for (const l of tl) {
@@ -162,7 +162,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const wkCost = l.costPerTrip * l.tripsPerWeek;
         weeklyExposure += wkRev;
         weeklyCost += wkCost;
-        laneGP.push({ label: `${l.origin} → ${l.destination}`, gp: wkRev - wkCost, tenderRef: t.tenderRef });
+        laneGP.push({ label: `${l.origin} → ${l.destination}`, origin: l.origin, destination: l.destination, gp: wkRev - wkCost, tenderRef: t.tenderRef });
       }
     }
     const annualPipeline = weeklyExposure * 52;

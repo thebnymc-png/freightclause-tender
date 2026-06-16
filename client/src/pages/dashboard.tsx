@@ -17,7 +17,7 @@ import type { Tender } from "@shared/schema";
 
 type Kpis = {
   activeTenders: number; weeklyExposure: number; annualPipeline: number; blendedMargin: number;
-  topLanes: { label: string; gp: number; tenderRef: string }[];
+  topLanes: { label: string; origin: string; destination: string; gp: number; tenderRef: string }[];
   monthly: { month: string; revenue: number; cost: number }[];
   recentTenders: Tender[];
 };
@@ -74,12 +74,12 @@ export default function Dashboard() {
             <h2 className="mb-3 text-sm font-semibold">Top 5 lanes by GP</h2>
             <div className="space-y-2">
               {data?.topLanes.map((l, i) => (
-                <div key={i} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2" data-testid={`row-toplane-${i}`}>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{l.label}</p>
-                    <p className="text-xs text-muted-foreground">{l.tenderRef}</p>
+                <div key={i} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2" data-testid={`row-toplane-${i}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold" title={l.label}>{l.destination}</p>
+                    <p className="truncate text-xs text-muted-foreground" title={l.label}>{l.origin} · {l.tenderRef}</p>
                   </div>
-                  <span className="tnum text-sm font-semibold text-primary">{aud(l.gp)}/wk</span>
+                  <span className="tnum shrink-0 text-sm font-semibold text-primary">{aud(l.gp)}/wk</span>
                 </div>
               ))}
             </div>
