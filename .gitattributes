@@ -1,0 +1,22 @@
+# Force LF for everything Linux/Docker has to execute, even on Windows checkouts.
+# Without this, Git's autocrlf turns *.sh into CRLF on Windows and the Fly
+# container fails with `/usr/bin/env: 'bash\r': No such file or directory`.
+
+* text=auto eol=lf
+
+# Shell scripts and Dockerfiles MUST be LF
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+
+# Binary files — never touch
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   text eol=lf
+*.db    binary
+*.zip   binary

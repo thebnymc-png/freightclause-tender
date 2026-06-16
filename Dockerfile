@@ -51,7 +51,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY litestream.yml /etc/litestream.yml
 COPY fly-entrypoint.sh /app/fly-entrypoint.sh
-RUN chmod +x /app/fly-entrypoint.sh
+# Strip CR (in case the file was checked out on Windows with CRLF) and make executable.
+# Without this, the container crashes with `/usr/bin/env: 'bash\r': No such file or directory`.
+RUN sed -i 's/\r$//' /app/fly-entrypoint.sh && chmod +x /app/fly-entrypoint.sh
 
 ENV NODE_ENV=production \
     PORT=8080 \
