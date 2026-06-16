@@ -1,6 +1,15 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+// Resolution order:
+//   1. VITE_API_BASE  — set at build time when deploying to Cloudflare Pages
+//                       (points at the Fly.io backend, e.g. https://tender-api.fly.dev)
+//   2. __PORT_5000__  — replaced by Perplexity deploy_website with a proxy path
+//   3. ""             — same-origin (local dev, fullstack single-port)
+const BUILD_API = (import.meta.env.VITE_API_BASE as string | undefined) || "";
+const PROXY_TOKEN = "__PORT_5000__";
+const API_BASE = BUILD_API
+  ? BUILD_API.replace(/\/$/, "")
+  : PROXY_TOKEN.startsWith("__") ? "" : PROXY_TOKEN;
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {

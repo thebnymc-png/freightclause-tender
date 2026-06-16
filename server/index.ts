@@ -1,12 +1,22 @@
 import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 
 const app = express();
 const httpServer = createServer(app);
+
+// CORS — allow the Cloudflare Pages frontend to call the Fly backend.
+// Set CORS_ORIGIN to a comma-separated list of allowed origins, e.g.
+//   CORS_ORIGIN=https://tender.freightclause.com,https://tender-jdt.pages.dev
+const corsOrigins = (process.env.CORS_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: corsOrigins.length ? corsOrigins : true,
+  credentials: true,
+}));
 
 declare module "http" {
   interface IncomingMessage {

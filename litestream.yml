@@ -1,0 +1,20 @@
+# Litestream configuration — continuous SQLite replication
+#
+# Set the following Fly secrets to enable backup/restore:
+#   LITESTREAM_ACCESS_KEY_ID      — S3 / R2 access key
+#   LITESTREAM_SECRET_ACCESS_KEY  — S3 / R2 secret
+#   LITESTREAM_REPLICA_URL        — e.g. s3://my-bucket/tender-db
+#                                   or  s3://my-r2-bucket.<account>.r2.cloudflarestorage.com/tender-db
+#
+# If LITESTREAM_REPLICA_URL is unset, fly-entrypoint.sh skips replication and
+# just runs the Node server directly (useful for first-deploy / smoke test).
+
+dbs:
+  - path: /data/data.db
+    replicas:
+      - url: ${LITESTREAM_REPLICA_URL}
+        # Snapshot once per hour, retain 24 hourly + 7 daily generations
+        snapshot-interval: 1h
+        retention: 168h
+        retention-check-interval: 1h
+        sync-interval: 10s

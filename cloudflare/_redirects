@@ -1,0 +1,6 @@
+# Cloudflare Pages — _redirects file
+# SPA fallback: any unmatched path serves index.html (200 = rewrite, not redirect).
+# Hash routing (wouter useHashLocation) doesn't strictly need this, but it
+# prevents 404s if a user lands on a deep link without the hash.
+
+/*    /index.html   200

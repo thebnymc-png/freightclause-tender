@@ -1,0 +1,7 @@
+# Cloudflare Pages config (used with `wrangler pages deploy`).
+# Pages projects don't technically require wrangler.toml, but having it here
+# lets you deploy from CI with one command and keeps the project name pinned.
+
+name = "freightclause-tender"
+compatibility_date = "2025-01-01"
+pages_build_output_dir = "dist/public"

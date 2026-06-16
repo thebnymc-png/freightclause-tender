@@ -1,0 +1,47 @@
+# =============================================================================
+# Fly.io app config — FreightClause Tender backend (JDT)
+# Region: syd (Sydney) — lowest latency from Brisbane.
+# Mounts a 1GB volume at /data for SQLite + WAL files.
+# Litestream replicates /data/data.db to S3-compatible storage (set via secrets).
+# =============================================================================
+
+app = "freightclause-tender-api"          # change if the name is taken
+primary_region = "syd"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV       = "production"
+  PORT           = "8080"
+  DATABASE_PATH  = "/data/data.db"
+  # CORS_ORIGIN is set as a SECRET, not here — see deploy commands below.
+
+[[mounts]]
+  source      = "tender_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = "stop"      # scale-to-zero when idle (cheap)
+  auto_start_machines = true
+  min_machines_running = 0          # set to 1 if you want zero cold starts
+
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout  = "5s"
+    grace_period = "10s"
+    method   = "GET"
+    path     = "/api/dashboard/kpis"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1

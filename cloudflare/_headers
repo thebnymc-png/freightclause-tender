@@ -1,0 +1,16 @@
+# Cloudflare Pages — _headers file
+# Place this at the root of the deployed output (dist/public/_headers).
+
+/*
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+
+# Cache hashed Vite assets aggressively
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Never cache the HTML shell — lets you ship new builds immediately
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate

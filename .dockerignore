@@ -1,0 +1,10 @@
+node_modules
+dist
+qa
+.git
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+freightclause-tender-BUILD-COMPLETE.md
