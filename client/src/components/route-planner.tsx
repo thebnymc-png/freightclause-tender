@@ -296,7 +296,12 @@ function MapWithLoader({
         options={{ disableDefaultUI: false, streetViewControl: false, mapTypeControl: false }}
       >
         {points.map((p, i) => <Marker key={i} position={p} label={i === 0 ? "D" : String(i)} />)}
-        <Polyline path={points} options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }} />
+        {points.length >= 2 && (
+          <Polyline
+            path={points}
+            options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }}
+          />
+        )}
       </GoogleMap>
     </MapErrorBoundary>
   );
