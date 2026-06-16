@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, Component, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from "@react-google-maps/api";
 import {
@@ -61,10 +61,44 @@ function SortableStop({ id, value, index, onChange, onRemove }: {
 
 const LIBS: any = [];
 
+// Error boundary so a Google Maps loader failure cannot blank out the whole page.
+// Catches: bad/expired API key, billing disabled, Maps JS API not enabled,
+// or a script-loader race when the key arrives after the loader registers.
+class MapErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean; message?: string }
+> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(err: Error) {
+    return { hasError: true, message: err.message };
+  }
+  componentDidCatch(err: Error) {
+    // eslint-disable-next-line no-console
+    console.error("[RoutePlanner] Google Maps failed to load:", err);
+  }
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
 export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChange?: (r: PlannerRoute) => void }) {
-  const { data: config } = useQuery<MapsConfig>({ queryKey: ["/api/maps/config"] });
+  const { data: config, isLoading: configLoading } = useQuery<MapsConfig>({ queryKey: ["/api/maps/config"] });
   const apiKey = config?.apiKey || "";
-  const { isLoaded } = useJsApiLoader({ id: "gmap-loader", googleMapsApiKey: apiKey, libraries: LIBS });
+  // Only register the JS API loader after the config query resolves AND we
+  // actually have a key. @react-google-maps/api caches the first key passed in
+  // and refuses to swap to a new one, so registering with "" first then the
+  // real key throws and blanks the page.
+  const shouldLoadMaps = !configLoading && apiKey.length > 0;
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: "gmap-loader",
+    googleMapsApiKey: shouldLoadMaps ? apiKey : "",
+    libraries: LIBS,
+    preventGoogleFontsLoading: true,
+  });
 
   const [stops, setStops] = useState<string[]>(route.stops);
   const [depot, setDepot] = useState(route.depot);
@@ -200,15 +234,36 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
 
       {/* Right: map */}
       <Card className="relative min-h-[420px] overflow-hidden p-0">
-        {isLoaded && apiKey ? (
-          <GoogleMap
-            mapContainerStyle={{ width: "100%", height: "100%", minHeight: 420 }}
-            center={center} zoom={10}
-            options={{ disableDefaultUI: false, streetViewControl: false, mapTypeControl: false }}
+        {shouldLoadMaps && isLoaded && !loadError ? (
+          <MapErrorBoundary
+            fallback={
+              <FallbackMap
+                points={points} stops={stops} depot={depot}
+                reason="Google Maps failed to render — check the browser console. Most common cause: the Maps JavaScript API is not enabled in your Google Cloud project, or the key is restricted to other domains."
+              />
+            }
           >
-            {points.map((p, i) => <Marker key={i} position={p} label={i === 0 ? "D" : String(i)} />)}
-            <Polyline path={points} options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }} />
-          </GoogleMap>
+            <GoogleMap
+              mapContainerStyle={{ width: "100%", height: "100%", minHeight: 420 }}
+              center={center} zoom={10}
+              options={{ disableDefaultUI: false, streetViewControl: false, mapTypeControl: false }}
+            >
+              {points.map((p, i) => <Marker key={i} position={p} label={i === 0 ? "D" : String(i)} />)}
+              <Polyline path={points} options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }} />
+            </GoogleMap>
+          </MapErrorBoundary>
+        ) : shouldLoadMaps && loadError ? (
+          <FallbackMap
+            points={points} stops={stops} depot={depot}
+            reason={`Google Maps failed to load: ${loadError.message}. Check that Maps JavaScript API is enabled and the key allows this domain.`}
+          />
+        ) : shouldLoadMaps && !isLoaded ? (
+          <div
+            className="flex h-full min-h-[420px] items-center justify-center text-sm text-muted-foreground"
+            data-testid="map-loading"
+          >
+            Loading map…
+          </div>
         ) : (
           <FallbackMap points={points} stops={stops} depot={depot} />
         )}
@@ -226,8 +281,10 @@ function Metric({ icon: Icon, label, value }: { icon: any; label: string; value:
   );
 }
 
-// Schematic fallback when no Google Maps key — draws stops on an SVG canvas
-function FallbackMap({ points, stops, depot }: { points: { lat: number; lng: number }[]; stops: string[]; depot: string }) {
+// Schematic fallback when no Google Maps key (or when the loader fails) —
+// draws stops on an SVG canvas. `reason` overrides the default "add a key"
+// hint so the user sees the actual failure.
+function FallbackMap({ points, stops, depot, reason }: { points: { lat: number; lng: number }[]; stops: string[]; depot: string; reason?: string }) {
   const all = points.length ? points : [{ lat: -27.58, lng: 153.03 }];
   const lats = all.map((p) => p.lat), lngs = all.map((p) => p.lng);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
@@ -256,7 +313,7 @@ function FallbackMap({ points, stops, depot }: { points: { lat: number; lng: num
         ))}
       </svg>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 bg-gradient-to-t from-background/95 to-transparent p-3 text-center">
-        <p className="text-xs font-medium text-muted-foreground">Schematic preview — add a Google Maps API key in Settings for the live map.</p>
+        <p className="text-xs font-medium text-muted-foreground">{reason || "Schematic preview — add a Google Maps API key in Settings for the live map."}</p>
       </div>
     </div>
   );
