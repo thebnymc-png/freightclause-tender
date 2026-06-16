@@ -88,17 +88,11 @@ class MapErrorBoundary extends Component<
 export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChange?: (r: PlannerRoute) => void }) {
   const { data: config, isLoading: configLoading } = useQuery<MapsConfig>({ queryKey: ["/api/maps/config"] });
   const apiKey = config?.apiKey || "";
-  // Only register the JS API loader after the config query resolves AND we
-  // actually have a key. @react-google-maps/api caches the first key passed in
-  // and refuses to swap to a new one, so registering with "" first then the
-  // real key throws and blanks the page.
+  // The Google Maps JS loader caches the first key it sees and refuses to
+  // swap to a different one. Passing "" first then the real key throws and
+  // blanks the page. So we NEVER call useJsApiLoader here — we only mount
+  // <MapWithLoader> when we already have a non-empty key.
   const shouldLoadMaps = !configLoading && apiKey.length > 0;
-  const { isLoaded, loadError } = useJsApiLoader({
-    id: "gmap-loader",
-    googleMapsApiKey: shouldLoadMaps ? apiKey : "",
-    libraries: LIBS,
-    preventGoogleFontsLoading: true,
-  });
 
   const [stops, setStops] = useState<string[]>(route.stops);
   const [depot, setDepot] = useState(route.depot);
@@ -234,41 +228,77 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
 
       {/* Right: map */}
       <Card className="relative min-h-[420px] overflow-hidden p-0">
-        {shouldLoadMaps && isLoaded && !loadError ? (
-          <MapErrorBoundary
-            fallback={
-              <FallbackMap
-                points={points} stops={stops} depot={depot}
-                reason="Google Maps failed to render — check the browser console. Most common cause: the Maps JavaScript API is not enabled in your Google Cloud project, or the key is restricted to other domains."
-              />
-            }
-          >
-            <GoogleMap
-              mapContainerStyle={{ width: "100%", height: "100%", minHeight: 420 }}
-              center={center} zoom={10}
-              options={{ disableDefaultUI: false, streetViewControl: false, mapTypeControl: false }}
-            >
-              {points.map((p, i) => <Marker key={i} position={p} label={i === 0 ? "D" : String(i)} />)}
-              <Polyline path={points} options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }} />
-            </GoogleMap>
-          </MapErrorBoundary>
-        ) : shouldLoadMaps && loadError ? (
-          <FallbackMap
-            points={points} stops={stops} depot={depot}
-            reason={`Google Maps failed to load: ${loadError.message}. Check that Maps JavaScript API is enabled and the key allows this domain.`}
+        {shouldLoadMaps ? (
+          <MapWithLoader
+            apiKey={apiKey}
+            points={points}
+            stops={stops}
+            depot={depot}
+            center={center}
           />
-        ) : shouldLoadMaps && !isLoaded ? (
-          <div
-            className="flex h-full min-h-[420px] items-center justify-center text-sm text-muted-foreground"
-            data-testid="map-loading"
-          >
-            Loading map…
-          </div>
         ) : (
           <FallbackMap points={points} stops={stops} depot={depot} />
         )}
       </Card>
     </div>
+  );
+}
+
+// Inner component that owns the Google Maps loader hook. It is only ever
+// mounted when we already have a real, non-empty API key, so useJsApiLoader
+// is called exactly once with the correct key on its very first render.
+function MapWithLoader({
+  apiKey, points, stops, depot, center,
+}: {
+  apiKey: string;
+  points: { lat: number; lng: number }[];
+  stops: string[];
+  depot: string;
+  center: { lat: number; lng: number };
+}) {
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: "gmap-loader",
+    googleMapsApiKey: apiKey,
+    libraries: LIBS,
+    preventGoogleFontsLoading: true,
+  });
+
+  if (loadError) {
+    return (
+      <FallbackMap
+        points={points} stops={stops} depot={depot}
+        reason={`Google Maps failed to load: ${loadError.message}. Check that Maps JavaScript API is enabled and the key allows this domain.`}
+      />
+    );
+  }
+  if (!isLoaded) {
+    return (
+      <div
+        className="flex h-full min-h-[420px] items-center justify-center text-sm text-muted-foreground"
+        data-testid="map-loading"
+      >
+        Loading map…
+      </div>
+    );
+  }
+  return (
+    <MapErrorBoundary
+      fallback={
+        <FallbackMap
+          points={points} stops={stops} depot={depot}
+          reason="Google Maps failed to render — check the browser console. Most common cause: the Maps JavaScript API is not enabled in your Google Cloud project, or the key is restricted to other domains."
+        />
+      }
+    >
+      <GoogleMap
+        mapContainerStyle={{ width: "100%", height: "100%", minHeight: 420 }}
+        center={center} zoom={10}
+        options={{ disableDefaultUI: false, streetViewControl: false, mapTypeControl: false }}
+      >
+        {points.map((p, i) => <Marker key={i} position={p} label={i === 0 ? "D" : String(i)} />)}
+        <Polyline path={points} options={{ strokeColor: "#01696F", strokeWeight: 4, strokeOpacity: 0.85 }} />
+      </GoogleMap>
+    </MapErrorBoundary>
   );
 }
 
