@@ -29,6 +29,10 @@ export const tenders = sqliteTable("tenders", {
   fuelLevy: real("fuel_levy").notNull().default(12),
   gstRate: real("gst_rate").notNull().default(10),
   incumbentCarrier: text("incumbent_carrier"),
+  // Cost model (per-tender overrides; fall back to global Settings when 0/null)
+  costPerKm: real("cost_per_km").notNull().default(0),       // 0 = use settings.costPerKm
+  fixedPerTrip: real("fixed_per_trip").notNull().default(0), // tolls, handling, driver fixed
+  avgKmPerLane: real("avg_km_per_lane").notNull().default(0),// fallback distance when row has none
   decision: text("decision").notNull().default("pending"), // one of DECISIONS
   createdAt: integer("created_at").notNull(),
 });

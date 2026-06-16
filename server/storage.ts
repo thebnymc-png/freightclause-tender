@@ -15,6 +15,12 @@ sqlite.pragma("journal_mode = WAL");
 export const db = drizzle(sqlite);
 
 // Ensure tables exist (no migration step in this env)
+// Idempotent column adds for tenders (v7) — must run BEFORE drizzle reads from the table.
+function safeAddColumn(table: string, col: string, decl: string) {
+  try { sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`); }
+  catch (e: any) { if (!/duplicate column/i.test(e.message)) throw e; }
+}
+
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL
@@ -24,6 +30,9 @@ CREATE TABLE IF NOT EXISTS tenders (
   customer_name TEXT NOT NULL, format TEXT NOT NULL, industry TEXT, term TEXT,
   target_margin REAL NOT NULL DEFAULT 18, fuel_levy REAL NOT NULL DEFAULT 12,
   gst_rate REAL NOT NULL DEFAULT 10, incumbent_carrier TEXT,
+  cost_per_km REAL NOT NULL DEFAULT 0,
+  fixed_per_trip REAL NOT NULL DEFAULT 0,
+  avg_km_per_lane REAL NOT NULL DEFAULT 0,
   decision TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS lanes (
@@ -42,6 +51,8 @@ CREATE TABLE IF NOT EXISTS routes (
 CREATE TABLE IF NOT EXISTS customers (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, industry TEXT, contact_email TEXT, notes TEXT
 );
+-- Idempotent ALTERs for existing DBs (added in v7)
+-- SQLite has no ADD COLUMN IF NOT EXISTS, so we swallow the duplicate-column error in JS below.
 CREATE TABLE IF NOT EXISTS settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT, google_maps_api_key TEXT NOT NULL DEFAULT '',
   cost_per_km REAL NOT NULL DEFAULT 1.85, driver_hourly REAL NOT NULL DEFAULT 38,
@@ -52,6 +63,11 @@ CREATE TABLE IF NOT EXISTS settings (
   profile_name TEXT NOT NULL DEFAULT 'Ops Manager', profile_email TEXT NOT NULL DEFAULT 'ops@jdt.com.au'
 );
 `);
+
+// v7 cost-model columns on tenders (idempotent for existing DBs)
+safeAddColumn("tenders", "cost_per_km", "REAL NOT NULL DEFAULT 0");
+safeAddColumn("tenders", "fixed_per_trip", "REAL NOT NULL DEFAULT 0");
+safeAddColumn("tenders", "avg_km_per_lane", "REAL NOT NULL DEFAULT 0");
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;

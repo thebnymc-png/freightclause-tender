@@ -32,13 +32,50 @@ import {
 import { cn } from "@/lib/utils";
 import type { Tender, Lane } from "@shared/schema";
 
-const FORMAT_PRESETS: Record<string, { fields: Record<string, string[]> }> = {
-  lane_list: { fields: { origin: ["origin", "from", "pickup", "depot"], destination: ["destination", "to", "drop", "delivery"], vehicle: ["vehicle", "truck", "equipment"], pallets: ["pallets", "pallet", "units"], tripsPerWeek: ["trips", "frequency", "trips/week", "freq"] } },
-  multi_drop: { fields: { origin: ["origin", "depot", "from"], destination: ["destination", "stop", "to"], stops: ["stops", "drops", "no. stops"], pallets: ["pallets", "units"], tripsPerWeek: ["trips", "frequency"] } },
-  dc_volumes: { fields: { origin: ["dc", "origin", "warehouse"], destination: ["destination", "store", "region"], pallets: ["volume", "pallets", "cartons"], tripsPerWeek: ["trips", "deliveries"] } },
-  rate_card: { fields: { origin: ["origin", "from"], destination: ["destination", "to", "zone"], vehicle: ["vehicle", "class"], incumbentRate: ["rate", "price", "current rate"] } },
-  rfp_narrative: { fields: { origin: ["origin", "from"], destination: ["destination", "to"], pallets: ["pallets", "volume"] } },
+// Shared optional economics columns — added to every format so any RFT layout can map them.
+const COST_FIELDS = {
+  distanceKm:    ["distance", "km", "distance km", "kms", "distance (km)"],
+  costPerTrip:   ["cost per trip", "cost/trip", "trip cost", "cost"],
+  proposedRate:  ["proposed rate", "jdt rate", "our rate", "proposed", "sell rate"],
+  incumbentRate: ["incumbent rate", "incumbent", "current rate", "rate", "price"],
 };
+
+const FORMAT_PRESETS: Record<string, { fields: Record<string, string[]> }> = {
+  lane_list: { fields: { origin: ["origin", "from", "pickup", "depot"], destination: ["destination", "to", "drop", "delivery"], vehicle: ["vehicle", "truck", "equipment"], pallets: ["pallets", "pallet", "units"], tripsPerWeek: ["trips", "frequency", "trips/week", "freq"], ...COST_FIELDS } },
+  multi_drop: { fields: { origin: ["origin", "depot", "from"], destination: ["destination", "stop", "to"], stops: ["stops", "drops", "no. stops"], pallets: ["pallets", "units"], tripsPerWeek: ["trips", "frequency"], ...COST_FIELDS } },
+  dc_volumes: { fields: { origin: ["dc", "origin", "warehouse"], destination: ["destination", "store", "region"], pallets: ["volume", "pallets", "cartons"], tripsPerWeek: ["trips", "deliveries"], ...COST_FIELDS } },
+  rate_card: { fields: { origin: ["origin", "from"], destination: ["destination", "to", "zone"], vehicle: ["vehicle", "class"], ...COST_FIELDS } },
+  rfp_narrative: { fields: { origin: ["origin", "from"], destination: ["destination", "to"], pallets: ["pallets", "volume"], ...COST_FIELDS } },
+};
+
+type CostModel = { costPerKm: number; fixedPerTrip: number; avgKmPerLane: number; fuelLevy: number; targetMargin: number };
+
+// Pure helper: compute costPerTrip + a starting proposedRate from a row + model.
+// Mapped values always win; model fills the gaps.
+function deriveLaneEconomics(row: any, mapping: Record<string, string>, model: CostModel) {
+  const mapped = (k: string) => mapping[k] ? Number(row[mapping[k]]) || 0 : 0;
+  let distanceKm   = mapped("distanceKm");
+  let costPerTrip  = mapped("costPerTrip");
+  let proposedRate = mapped("proposedRate");
+  const incumbentRate = mapped("incumbentRate");
+
+  if (!distanceKm && model.avgKmPerLane > 0) distanceKm = model.avgKmPerLane;
+  if (!costPerTrip && model.costPerKm > 0) {
+    // round-trip distance × $/km, plus fixed, plus fuel levy uplift
+    const variable = distanceKm * 2 * model.costPerKm;
+    costPerTrip = (variable + model.fixedPerTrip) * (1 + model.fuelLevy / 100);
+  }
+  if (!proposedRate && costPerTrip > 0 && model.targetMargin > 0) {
+    // proposed rate so that (rate - cost)/rate = targetMargin%  →  rate = cost / (1 - margin)
+    proposedRate = costPerTrip / (1 - model.targetMargin / 100);
+  }
+  return {
+    distanceKm:   Math.round(distanceKm),
+    costPerTrip:  Math.round(costPerTrip),
+    proposedRate: Math.round(proposedRate),
+    incumbentRate: Math.round(incumbentRate),
+  };
+}
 
 // ---------------- Intake tab ----------------
 function IntakeTab({ tender }: { tender: Tender }) {
@@ -47,6 +84,38 @@ function IntakeTab({ tender }: { tender: Tender }) {
   const [format, setFormat] = useState(tender.format);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
+
+  // Global cost defaults from Settings (fallback when tender-level overrides are 0)
+  const { data: settings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    queryFn: async () => (await apiRequest("GET", "/api/settings")).json(),
+  });
+
+  // Tender-level cost model overrides (editable inline)
+  const [model, setModel] = useState({
+    costPerKm:   (tender as any).costPerKm   || 0,
+    fixedPerTrip:(tender as any).fixedPerTrip|| 0,
+    avgKmPerLane:(tender as any).avgKmPerLane|| 0,
+  });
+
+  // Effective model = tender override OR global default
+  const effective: CostModel = {
+    costPerKm:    model.costPerKm    || settings?.costPerKm    || 1.85,
+    fixedPerTrip: model.fixedPerTrip || 0,
+    avgKmPerLane: model.avgKmPerLane || 0,
+    fuelLevy:     tender.fuelLevy    || 0,
+    targetMargin: tender.targetMargin|| 18,
+  };
+
+  const saveModel = useMutation({
+    mutationFn: async (m: typeof model) => {
+      await apiRequest("PATCH", `/api/tenders/${tender.id}`, m);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenders", tender.id] });
+      toast({ title: "Cost model saved" });
+    },
+  });
 
   const onDrop = async (files: File[]) => {
     if (!files.length) return;
@@ -84,16 +153,18 @@ function IntakeTab({ tender }: { tender: Tender }) {
 
   const importLanes = useMutation({
     mutationFn: async () => {
-      const rows = parsed!.rows.map((r) => ({
-        origin: String(r[mapping.origin] ?? "Acacia Ridge DC"),
-        destination: String(r[mapping.destination] ?? "—"),
-        vehicle: String(r[mapping.vehicle] ?? "Rigid"),
-        pallets: Number(r[mapping.pallets]) || 0,
-        tripsPerWeek: Number(r[mapping.tripsPerWeek]) || 1,
-        stops: Number(r[mapping.stops]) || 1,
-        incumbentRate: Number(r[mapping.incumbentRate]) || 0,
-        distanceKm: 0, costPerTrip: 0, proposedRate: 0,
-      }));
+      const rows = parsed!.rows.map((r) => {
+        const econ = deriveLaneEconomics(r, mapping, effective);
+        return {
+          origin: String(r[mapping.origin] ?? "Acacia Ridge DC"),
+          destination: String(r[mapping.destination] ?? "—"),
+          vehicle: String(r[mapping.vehicle] ?? "Rigid"),
+          pallets: Number(r[mapping.pallets]) || 0,
+          tripsPerWeek: Number(r[mapping.tripsPerWeek]) || 1,
+          stops: Number(r[mapping.stops]) || 1,
+          ...econ,
+        };
+      });
       const res = await apiRequest("POST", `/api/tenders/${tender.id}/lanes`, rows);
       return res.json();
     },
@@ -106,6 +177,57 @@ function IntakeTab({ tender }: { tender: Tender }) {
 
   return (
     <div className="space-y-5">
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold">Cost model</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Used to derive cost/trip and a starting proposed rate when the file doesn't include them.
+              Mapped columns always win.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => saveModel.mutate(model)}
+            disabled={saveModel.isPending} data-testid="button-save-model">
+            {saveModel.isPending ? "Saving…" : "Save to tender"}
+          </Button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="space-y-1.5">
+            <Label className="text-xs">$/km <span className="text-muted-foreground">(global: {aud(settings?.costPerKm || 1.85, 2)})</span></Label>
+            <Input type="number" step="0.01" value={model.costPerKm || ""}
+              placeholder={String(settings?.costPerKm ?? 1.85)}
+              onChange={(e) => setModel({ ...model, costPerKm: Number(e.target.value) || 0 })}
+              data-testid="input-cost-per-km" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fixed per trip ($)</Label>
+            <Input type="number" step="1" value={model.fixedPerTrip || ""}
+              placeholder="e.g. 25 (tolls, handling)"
+              onChange={(e) => setModel({ ...model, fixedPerTrip: Number(e.target.value) || 0 })}
+              data-testid="input-fixed-per-trip" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Avg km per lane (fallback)</Label>
+            <Input type="number" step="1" value={model.avgKmPerLane || ""}
+              placeholder="used when row has no distance"
+              onChange={(e) => setModel({ ...model, avgKmPerLane: Number(e.target.value) || 0 })}
+              data-testid="input-avg-km" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fuel levy</Label>
+            <Input type="text" disabled value={pct(tender.fuelLevy, 0)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Target margin</Label>
+            <Input type="text" disabled value={pct(tender.targetMargin, 0)} />
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Cost/trip</span> = (distance × 2 × $/km + fixed) × (1 + fuel levy).{" "}
+          <span className="font-medium text-foreground">Proposed rate</span> = cost / (1 − target margin).
+        </p>
+      </Card>
+
       <div {...getRootProps()}
         className={cn("flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/30 px-6 py-12 text-center transition-colors hover:border-primary/50",
           isDragActive && "border-primary bg-primary/5")}
