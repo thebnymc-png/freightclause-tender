@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, Component, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GoogleMap, useJsApiLoader, Marker, Polyline } from "@react-google-maps/api";
+import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from "@react-google-maps/api";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
@@ -32,14 +32,26 @@ const COORDS: Record<string, [number, number]> = {
   carindale: [-27.51, 153.101], cleveland: [-27.526, 153.264], "forest lake": [-27.623, 152.969],
   "browns plains": [-27.662, 153.047], goodna: [-27.613, 152.898], "sunnybank hills": [-27.61, 153.05],
 };
+// Fallback coord lookup for when an address hasn't been resolved by Places
+// yet. Real coords from Places Autocomplete take precedence — see geoCache.
 function coord(name: string): { lat: number; lng: number } | null {
   const k = name.toLowerCase();
   for (const key of Object.keys(COORDS)) if (k.includes(key)) return { lat: COORDS[key][0], lng: COORDS[key][1] };
   return null;
 }
 
-function SortableStop({ id, value, index, onChange, onRemove }: {
-  id: string; value: string; index: number; onChange: (v: string) => void; onRemove: () => void;
+type GeoCache = Record<string, { lat: number; lng: number }>;
+function resolveCoord(name: string, cache: GeoCache): { lat: number; lng: number } | null {
+  if (!name) return null;
+  if (cache[name]) return cache[name];
+  return coord(name);
+}
+
+function SortableStop({ id, value, index, placesReady, onChange, onResolve, onRemove }: {
+  id: string; value: string; index: number; placesReady: boolean;
+  onChange: (v: string) => void;
+  onResolve: (address: string, c: { lat: number; lng: number }) => void;
+  onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
@@ -51,7 +63,17 @@ function SortableStop({ id, value, index, onChange, onRemove }: {
         <GripVertical className="h-4 w-4" />
       </button>
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/12 text-[11px] font-semibold text-primary tnum">{index + 1}</span>
-      <Input value={value} onChange={(e) => onChange(e.target.value)} className="h-8 border-0 px-1 shadow-none focus-visible:ring-0" data-testid={`input-stop-${index}`} />
+      <div className="flex-1">
+        <PlaceAutocompleteInput
+          value={value}
+          placesReady={placesReady}
+          onChange={onChange}
+          onResolve={onResolve}
+          placeholder="Search address…"
+          testId={`input-stop-${index}`}
+          inputClassName="h-8 border-0 px-1 shadow-none focus-visible:ring-0"
+        />
+      </div>
       <button onClick={onRemove} className="text-muted-foreground hover:text-destructive" aria-label="Remove stop" data-testid={`button-remove-stop-${index}`}>
         <Trash2 className="h-4 w-4" />
       </button>
@@ -59,7 +81,69 @@ function SortableStop({ id, value, index, onChange, onRemove }: {
   );
 }
 
-const LIBS: any = [];
+// Address field backed by Google Places Autocomplete. Falls back to a plain
+// Input until the Places library is loaded (Autocomplete crashes if rendered
+// before that). When the user picks a suggestion we emit both the formatted
+// address AND the resolved lat/lng so the map can plot without depending on
+// the hardcoded suburb table.
+function PlaceAutocompleteInput({
+  value, placesReady, onChange, onResolve, placeholder, testId, inputClassName,
+}: {
+  value: string;
+  placesReady: boolean;
+  onChange: (v: string) => void;
+  onResolve: (address: string, c: { lat: number; lng: number }) => void;
+  placeholder?: string;
+  testId?: string;
+  inputClassName?: string;
+}) {
+  const acRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const onPlaceChanged = () => {
+    const ac = acRef.current;
+    if (!ac) return;
+    const place = ac.getPlace();
+    const formatted = place.formatted_address || place.name || "";
+    const loc = place.geometry?.location;
+    if (formatted) onChange(formatted);
+    if (formatted && loc) onResolve(formatted, { lat: loc.lat(), lng: loc.lng() });
+  };
+
+  if (!placesReady) {
+    return (
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={inputClassName}
+        data-testid={testId}
+      />
+    );
+  }
+  return (
+    <Autocomplete
+      onLoad={(ac) => { acRef.current = ac; }}
+      onPlaceChanged={onPlaceChanged}
+      options={{
+        componentRestrictions: { country: ["au"] },
+        fields: ["formatted_address", "geometry.location", "name"],
+        types: ["geocode"],
+      }}
+    >
+      <Input
+        defaultValue={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={inputClassName}
+        data-testid={testId}
+      />
+    </Autocomplete>
+  );
+}
+
+// Load the Places library so <Autocomplete> can use its predictions service.
+// Keep this as a stable module-level constant — changing the reference
+// would trigger the "Loader must not be called again" error.
+const LIBS: ("places")[] = ["places"];
 
 // Error boundary so a Google Maps loader failure cannot blank out the whole page.
 // Catches: bad/expired API key, billing disabled, Maps JS API not enabled,
@@ -96,6 +180,8 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
 
   const [stops, setStops] = useState<string[]>(route.stops);
   const [depot, setDepot] = useState(route.depot);
+  const [geoCache, setGeoCache] = useState<GeoCache>({});
+  const [placesReady, setPlacesReady] = useState(false);
   const [metrics, setMetrics] = useState<{ totalKm: number; durationMin: number; trafficMin: number; cost: number } | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
@@ -105,9 +191,16 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
   const idStops = useMemo(() => stops.map((s, i) => ({ id: `s-${i}`, value: s })), [stops]);
 
   const points = useMemo(() => {
-    const all = [depot, ...stops, depot].map(coord).filter(Boolean) as { lat: number; lng: number }[];
+    const all = [depot, ...stops, depot]
+      .map((s) => resolveCoord(s, geoCache))
+      .filter(Boolean) as { lat: number; lng: number }[];
     return all;
-  }, [depot, stops]);
+  }, [depot, stops, geoCache]);
+
+  // Called when Places Autocomplete resolves an address to real coords.
+  const handleResolved = (address: string, c: { lat: number; lng: number }) => {
+    setGeoCache((prev) => (prev[address] ? prev : { ...prev, [address]: c }));
+  };
 
   // compute metrics whenever stops/depot change
   useEffect(() => {
@@ -154,24 +247,25 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
       const d = await res.json();
       let order: number[] | undefined;
       if (d.source === "google") order = d.data?.routes?.[0]?.waypoint_order;
-      // fallback: nearest-neighbour from depot
+      // Fallback: nearest-neighbour from depot. Use real Places-resolved
+      // coords when available, fall back to the hardcoded suburb table.
       if (!order) {
-        const depotC = coord(depot);
+        const depotC = resolveCoord(depot, geoCache);
         if (depotC) {
-          const remaining = stops.map((s, i) => i);
+          const remaining = stops.map((_s, i) => i);
           const result: number[] = [];
           let cur = depotC;
           while (remaining.length) {
             let best = 0, bestD = Infinity;
             remaining.forEach((idx, ri) => {
-              const c = coord(stops[idx]);
+              const c = resolveCoord(stops[idx], geoCache);
               if (!c) return;
               const dist = (c.lat - cur.lat) ** 2 + (c.lng - cur.lng) ** 2;
               if (dist < bestD) { bestD = dist; best = ri; }
             });
             const chosen = remaining.splice(best, 1)[0];
             result.push(chosen);
-            cur = coord(stops[chosen]) || cur;
+            cur = resolveCoord(stops[chosen], geoCache) || cur;
           }
           order = result;
         }
@@ -192,8 +286,17 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
         <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Depot</label>
         <div className="mb-3 flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
           <MapPin className="h-4 w-4 text-primary" />
-          <Input value={depot} onChange={(e) => { setDepot(e.target.value); emit({ depot: e.target.value }); }}
-            className="h-8 border-0 px-1 shadow-none focus-visible:ring-0" data-testid="input-depot" />
+          <div className="flex-1">
+            <PlaceAutocompleteInput
+              value={depot}
+              placesReady={placesReady}
+              onChange={(v) => { setDepot(v); emit({ depot: v }); }}
+              onResolve={handleResolved}
+              placeholder="Search depot address…"
+              testId="input-depot"
+              inputClassName="h-8 border-0 px-1 shadow-none focus-visible:ring-0"
+            />
+          </div>
         </div>
         <div className="mb-2 flex items-center justify-between">
           <label className="text-xs font-medium text-muted-foreground">Stops ({stops.length})</label>
@@ -207,7 +310,9 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
             <div className="space-y-1.5">
               {idStops.map((s, i) => (
                 <SortableStop key={s.id} id={s.id} value={s.value} index={i}
+                  placesReady={placesReady}
                   onChange={(v) => { const next = [...stops]; next[i] = v; setStops(next); emit({ stops: next }); }}
+                  onResolve={handleResolved}
                   onRemove={() => { const next = stops.filter((_, idx) => idx !== i); setStops(next); emit({ stops: next }); }} />
               ))}
             </div>
@@ -235,6 +340,7 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
             stops={stops}
             depot={depot}
             center={center}
+            onPlacesReady={() => setPlacesReady(true)}
           />
         ) : (
           <FallbackMap points={points} stops={stops} depot={depot} />
@@ -248,13 +354,14 @@ export function RoutePlanner({ route, onChange }: { route: PlannerRoute; onChang
 // mounted when we already have a real, non-empty API key, so useJsApiLoader
 // is called exactly once with the correct key on its very first render.
 function MapWithLoader({
-  apiKey, points, stops, depot, center,
+  apiKey, points, stops, depot, center, onPlacesReady,
 }: {
   apiKey: string;
   points: { lat: number; lng: number }[];
   stops: string[];
   depot: string;
   center: { lat: number; lng: number };
+  onPlacesReady: () => void;
 }) {
   const { isLoaded, loadError } = useJsApiLoader({
     id: "gmap-loader",
@@ -262,6 +369,10 @@ function MapWithLoader({
     libraries: LIBS,
     preventGoogleFontsLoading: true,
   });
+
+  // Tell the parent the Places library is ready so it can mount
+  // <Autocomplete> in the address inputs.
+  useEffect(() => { if (isLoaded) onPlacesReady(); }, [isLoaded, onPlacesReady]);
 
   if (loadError) {
     return (
