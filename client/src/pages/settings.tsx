@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, KeyRound, Truck, MapPin, User } from "lucide-react";
+import { Save, KeyRound, Truck, MapPin, User, Calculator } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,10 @@ type SettingsDto = {
   costPerKm: number; driverHourly: number; fuelLevyDefault: number; gstRate: number;
   goThreshold: number; reviewThreshold: number; depotAddress: string; depotLat: number; depotLng: number;
   profileName: string; profileEmail: string; hasGoogleMapsApiKey: boolean;
+  // v8 JDT Pricing Model
+  driverBaseHourly: number; otMultiplier: number; publicHolidayHourly: number; linehaulHourly: number;
+  superRate: number; workcoverRate: number; payrollTaxRate: number;
+  vehicleRateUte: number; vehicleRateRigid: number; vehicleRateSemi: number; vehicleRateBdouble: number;
 };
 
 export default function Settings() {
@@ -58,6 +62,42 @@ export default function Settings() {
             <Field label="GST rate (%)"><Input type="number" value={f("gstRate") ?? ""} onChange={(e) => setN("gstRate", e.target.value)} data-testid="input-gst-rate" /></Field>
             <Field label="GO threshold (%)"><Input type="number" value={f("goThreshold") ?? ""} onChange={(e) => setN("goThreshold", e.target.value)} data-testid="input-go-threshold" /></Field>
             <Field label="REVIEW threshold (%)"><Input type="number" value={f("reviewThreshold") ?? ""} onChange={(e) => setN("reviewThreshold", e.target.value)} data-testid="input-review-threshold" /></Field>
+          </div>
+        </Card>
+
+        {/* JDT Pricing Model (v8 — mirrors Pricing-Template.xlsx) */}
+        <Card className="p-5">
+          <SectionTitle icon={Calculator} title="JDT Pricing Model" desc="Driver labour rates, statutory loadings and vehicle running cost per km. Used by the per-lane Leg Builder to derive cost/trip and proposed rate." />
+          <div className="space-y-4">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Driver base hourly</h4>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Base hourly ($)"><Input type="number" step="0.01" value={f("driverBaseHourly") ?? ""} onChange={(e) => setN("driverBaseHourly", e.target.value)} data-testid="input-driver-base" /></Field>
+                <Field label="OT multiplier"><Input type="number" step="0.0001" value={f("otMultiplier") ?? ""} onChange={(e) => setN("otMultiplier", e.target.value)} data-testid="input-ot-mult" /></Field>
+                <Field label="Public holiday ($/hr)"><Input type="number" step="0.01" value={f("publicHolidayHourly") ?? ""} onChange={(e) => setN("publicHolidayHourly", e.target.value)} data-testid="input-ph-hourly" /></Field>
+                <Field label="Linehaul ($/hr)"><Input type="number" step="0.01" value={f("linehaulHourly") ?? ""} onChange={(e) => setN("linehaulHourly", e.target.value)} data-testid="input-linehaul-hourly" /></Field>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Statutory loadings (applied to loaded hourly rate)</h4>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Field label="Super (decimal, e.g. 0.12)"><Input type="number" step="0.001" value={f("superRate") ?? ""} onChange={(e) => setN("superRate", e.target.value)} data-testid="input-super" /></Field>
+                <Field label="Workcover (decimal)"><Input type="number" step="0.00001" value={f("workcoverRate") ?? ""} onChange={(e) => setN("workcoverRate", e.target.value)} data-testid="input-workcover" /></Field>
+                <Field label="Payroll tax (decimal)"><Input type="number" step="0.0001" value={f("payrollTaxRate") ?? ""} onChange={(e) => setN("payrollTaxRate", e.target.value)} data-testid="input-payroll" /></Field>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Vehicle running cost ($/km)</h4>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Ute"><Input type="number" step="0.01" value={f("vehicleRateUte") ?? ""} onChange={(e) => setN("vehicleRateUte", e.target.value)} data-testid="input-veh-ute" /></Field>
+                <Field label="Rigid"><Input type="number" step="0.01" value={f("vehicleRateRigid") ?? ""} onChange={(e) => setN("vehicleRateRigid", e.target.value)} data-testid="input-veh-rigid" /></Field>
+                <Field label="Semi"><Input type="number" step="0.01" value={f("vehicleRateSemi") ?? ""} onChange={(e) => setN("vehicleRateSemi", e.target.value)} data-testid="input-veh-semi" /></Field>
+                <Field label="B-Double"><Input type="number" step="0.01" value={f("vehicleRateBdouble") ?? ""} onChange={(e) => setN("vehicleRateBdouble", e.target.value)} data-testid="input-veh-bdouble" /></Field>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-md p-3">
+              Loaded rate = base × OT × (1 + super) × (1 + workcover + payroll). Per leg cost = hours × loaded rate. Vehicle cost = km × $/km for the selected class.
+            </p>
           </div>
         </Card>
 

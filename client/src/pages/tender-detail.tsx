@@ -31,6 +31,15 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Tender, Lane } from "@shared/schema";
+import { LegBuilder, defaultLegsForLane } from "@/components/leg-builder";
+
+// Sum of leg hours for the per-hour metric in the lane table.
+function legHours(l: Lane): number {
+  try {
+    const legs = JSON.parse(l.legsJson || "[]") as { hours?: number }[];
+    return Array.isArray(legs) ? legs.reduce((s, x) => s + (Number(x.hours) || 0), 0) : 0;
+  } catch { return 0; }
+}
 
 // Shared optional economics columns — added to every format so any RFT layout can map them.
 const COST_FIELDS = {
@@ -155,13 +164,21 @@ function IntakeTab({ tender }: { tender: Tender }) {
     mutationFn: async () => {
       const rows = parsed!.rows.map((r) => {
         const econ = deriveLaneEconomics(r, mapping, effective);
+        const origin = String(r[mapping.origin] ?? "Acacia Ridge DC");
+        const destination = String(r[mapping.destination] ?? "—");
+        const vehicle = String(r[mapping.vehicle] ?? "Rigid");
+        // Synthesise default legs from the imported distance so the JDT Pricing Model has a starting point.
+        const legs = defaultLegsForLane({ origin, destination, distanceKm: econ.distanceKm });
         return {
-          origin: String(r[mapping.origin] ?? "Acacia Ridge DC"),
-          destination: String(r[mapping.destination] ?? "—"),
-          vehicle: String(r[mapping.vehicle] ?? "Rigid"),
+          origin,
+          destination,
+          vehicle,
+          vehicleClass: vehicle,
           pallets: Number(r[mapping.pallets]) || 0,
+          palletSpaces: Number(r[mapping.pallets]) || 0,
           tripsPerWeek: Number(r[mapping.tripsPerWeek]) || 1,
           stops: Number(r[mapping.stops]) || 1,
+          legsJson: JSON.stringify(legs),
           ...econ,
         };
       });
@@ -327,12 +344,15 @@ function WorkspaceTab({ tender, lanes, isLoading }: { tender: Tender; lanes: Lan
               <TableHead>Lane</TableHead>
               <TableHead className="hidden md:table-cell">Vehicle</TableHead>
               <TableHead className="text-right">Trips/wk</TableHead>
-              <TableHead className="text-right hidden sm:table-cell">Dist km</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Dist km</TableHead>
               <TableHead className="text-right">Cost/trip</TableHead>
               <TableHead className="text-right">JDT proposed $</TableHead>
               <TableHead className="text-right">Weekly $</TableHead>
               <TableHead className="text-right">Margin</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Per pallet</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Per hour</TableHead>
               <TableHead className="text-right">Status</TableHead>
+              <TableHead className="text-right w-24">Pricing</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -342,9 +362,9 @@ function WorkspaceTab({ tender, lanes, isLoading }: { tender: Tender; lanes: Lan
               return (
                 <TableRow key={l.id} data-testid={`lane-row-${l.id}`}>
                   <TableCell className="font-medium whitespace-nowrap">{l.origin} <ArrowRight className="inline h-3 w-3 text-muted-foreground" /> {l.destination}</TableCell>
-                  <TableCell className="hidden md:table-cell text-muted-foreground">{l.vehicle}</TableCell>
+                  <TableCell className="hidden md:table-cell text-muted-foreground">{l.vehicleClass || l.vehicle}</TableCell>
                   <TableCell className="text-right tnum">{l.tripsPerWeek}</TableCell>
-                  <TableCell className="text-right tnum hidden sm:table-cell">{num(l.distanceKm)}</TableCell>
+                  <TableCell className="text-right tnum hidden lg:table-cell">{num(l.distanceKm)}</TableCell>
                   <TableCell className="text-right tnum">{aud(l.costPerTrip)}</TableCell>
                   <TableCell className="text-right">
                     <Input
@@ -359,7 +379,14 @@ function WorkspaceTab({ tender, lanes, isLoading }: { tender: Tender; lanes: Lan
                   </TableCell>
                   <TableCell className="text-right tnum font-medium">{aud(laneWeekly(l.proposedRate, l.tripsPerWeek))}</TableCell>
                   <TableCell className="text-right tnum">{pct(margin)}</TableCell>
+                  <TableCell className="text-right tnum hidden lg:table-cell text-muted-foreground">
+                    {l.palletSpaces > 0 ? aud(l.proposedRate / l.palletSpaces, 2) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tnum hidden lg:table-cell text-muted-foreground">
+                    {legHours(l) > 0 ? aud(l.proposedRate / legHours(l), 2) : "—"}
+                  </TableCell>
                   <TableCell className="text-right"><StatusBadge decision={status} /></TableCell>
+                  <TableCell className="text-right"><LegBuilder lane={l} tender={tender} /></TableCell>
                 </TableRow>
               );
             })}

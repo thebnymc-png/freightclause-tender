@@ -69,6 +69,25 @@ safeAddColumn("tenders", "cost_per_km", "REAL NOT NULL DEFAULT 0");
 safeAddColumn("tenders", "fixed_per_trip", "REAL NOT NULL DEFAULT 0");
 safeAddColumn("tenders", "avg_km_per_lane", "REAL NOT NULL DEFAULT 0");
 
+// v8 JDT Pricing Model columns on lanes + settings (idempotent for existing DBs)
+safeAddColumn("lanes", "legs_json", "TEXT NOT NULL DEFAULT '[]'");
+safeAddColumn("lanes", "vehicle_class", "TEXT NOT NULL DEFAULT 'Rigid'");
+safeAddColumn("lanes", "tolls", "REAL NOT NULL DEFAULT 0");
+safeAddColumn("lanes", "overnight_allowance", "REAL NOT NULL DEFAULT 0");
+safeAddColumn("lanes", "loading_extras", "REAL NOT NULL DEFAULT 0");
+safeAddColumn("lanes", "pallet_spaces", "INTEGER NOT NULL DEFAULT 22");
+safeAddColumn("settings", "driver_base_hourly", "REAL NOT NULL DEFAULT 39.44");
+safeAddColumn("settings", "ot_multiplier", "REAL NOT NULL DEFAULT 1.0475");
+safeAddColumn("settings", "public_holiday_hourly", "REAL NOT NULL DEFAULT 46.83");
+safeAddColumn("settings", "linehaul_hourly", "REAL NOT NULL DEFAULT 60.20");
+safeAddColumn("settings", "super_rate", "REAL NOT NULL DEFAULT 0.12");
+safeAddColumn("settings", "workcover_rate", "REAL NOT NULL DEFAULT 0.06172");
+safeAddColumn("settings", "payroll_tax_rate", "REAL NOT NULL DEFAULT 0.0495");
+safeAddColumn("settings", "vehicle_rate_ute", "REAL NOT NULL DEFAULT 1.10");
+safeAddColumn("settings", "vehicle_rate_rigid", "REAL NOT NULL DEFAULT 1.35");
+safeAddColumn("settings", "vehicle_rate_semi", "REAL NOT NULL DEFAULT 1.85");
+safeAddColumn("settings", "vehicle_rate_bdouble", "REAL NOT NULL DEFAULT 2.10");
+
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   createUser(u: InsertUser): Promise<User>;
